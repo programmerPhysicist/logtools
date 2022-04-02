@@ -1,0 +1,181 @@
+name: Run security scan
+    # ------------------------------------------------------------
+    # (C) Alain Lichnewsky, 2021
+    # (C) Alex Marvin, 2022
+    # For running under Github's Actions
+    #
+    # Script performs security scan after setup
+    # ------------------------------------------------------------
+
+on:
+  push:
+    branches: [ ALPython3 ]
+  pull_request:
+    # The branches below must be a subset of the branches above
+    branches: [ ALPython3 ]
+  schedule:
+    - cron: '44 1 * * 4'
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        permissions:
+            actions: read
+            contents: read
+            security-events: write
+
+        # Defining environment variables at this level
+        env:
+            #  From:
+            #  https://docs.github.com/en/actions/reference/environment-variables
+            #  ``The workspace directory is a copy of your repository if your
+            #    workflow uses the actions/checkout action. If you don't use
+            #    the actions/checkout action, the directory denoted in
+            #    GITHUB_WORKSPACE will be empty.''
+            #
+            #  So using a handwired  version (TB CHECKED LATER, not modular)
+            #  There are constraints on src_Dpath_path value, see below
+            #
+            src_Dpath_path: /home/runner/work/logtools/logtools/aux/lib/srcDpath
+    
+        strategy:
+            fail-fast: false
+            matrix:
+                language: [ 'python' ]
+                # CodeQL supports [ 'cpp', 'csharp', 'go', 'java', 'javascript', 'python', 'ruby' ]
+                # Learn more about CodeQL language support at https://git.io/codeql-language-support
+
+        steps:
+        - uses: actions/checkout@v2
+        - name: Set up Python 3.8
+          uses: actions/setup-python@v2
+          with:
+              python-version: '3.8'
+              architecture: 'x64'
+
+        # ------------------------------------------------------------
+        # Later see about caching pip dependencies
+        # https://docs.github.com/en/actions/guides/building-and-testing-python
+        # ------------------------------------------------------------
+
+        - name: Ascertain configuration and add some paths
+          #
+          #    Collect information concerning $HOME (for ~/.logtoolsrc setup)
+          #    i.e. location of file loaded from Github/
+          #    Also show $LANG ( Locale may be relevant in processing of dates )
+          #
+          run: |
+                if [ ! -d ${src_Dpath_path} ] ; then
+                    mkdir -p ${src_Dpath_path}
+                fi
+                echo Home dir $HOME
+                echo files at this location
+                ls -ltha $HOME
+                echo "+++++"
+                echo Working dir $(pwd)
+                echo Files at this location:
+                ls -ltha
+                echo "+++++"
+                echo HOME: $HOME
+                echo LANG: $LANG
+              #  ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+              #    ** here :: **
+              #  pythonLocation: /opt/hostedtoolcache/Python/3.8.8/x64
+              #  LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.8.8/x64/lib
+              #  Working dir /home/runner/work/logtools/logtools
+              #  HOME: /home/runner
+              #  LANG: C.UTF-8
+              #  ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+        - name: Prepare for Python installs
+          # We start by upgrading pip, if needed (?)
+          run: |
+                python -m pip install --upgrade pip setuptools wheel
+
+        - name: Install full featured dpath from my own github repo
+          # Need to load dpath from my repository; otherwise the setup.py
+          # will install the default version without the special features
+
+          # Repo information: origin/AL-addRegexp
+          #      https://github.com/AlainLich/dpath-python.git
+          # Using https://github.com/actions/checkout for all required
+          # information on actions/checkout@v2
+
+          uses: actions/checkout@v2
+          with:
+              # Repository name with owner. For example, actions/checkout
+              # Default: ${{ github.repository }}
+              repository: 'AlainLich/dpath-python'
+               # The branch, tag or SHA to checkout. When checking out the
+              # repository that triggered a workflow, this defaults to the
+              # reference or SHA for that event. Otherwise, uses the default
+              # branch.
+              ref: 'AL-addRegexp'
+               # Absolute path to place the repository. There seems to be
+              # constraints, as I received an error "... is not under ..."
+              # See https://github.com/actions/checkout
+              # and more specifically https://github.com/actions/checkout/issues/197
+              #    `` Today the path input is the only way to change the directory
+              #       where the code is cloned. Also there is a restriction that it
+              #       must be under GITHUB_WORKSPACE. ''
+              # See FR https://github.com/actions/checkout/issues/327
+              #
+              path: ${{ env.src_Dpath_path }}
+
+        - name: Install dpath with config
+
+          run: |
+                cd ${src_Dpath_path}
+                echo Files in the dpath directory $(pwd) just loaded
+                ls -ltha
+                python setup.py install
+                if [ $? -eq 0 ] ; then
+                    echo Installed dpath successfully in ${src_Dpath_path}
+                    ls -ltha ${src_Dpath_path}
+                else
+                    echo FAILURE IN INSTALLATION OF dpath
+                fi
+
+        - name: Install logtools with config.py
+          if: always()
+          run: |
+                pwd
+                ls -ltha
+                python setup.py install
+                if [ $? -eq 0 ] ; then
+                    echo Installed logtools successfully
+                else
+                    echo FAILURE IN INSTALLATION OF logtools
+                fi
+
+        - name: Install other python dependencies
+          if: always()
+          # Take into account the requirements and setup.py built in
+          # dependencies.
+          # Do not install : pymysql
+          #
+          run: |
+            echo installing logtools requirements
+            if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+            
+        # Execute Codacy Analysis CLI and generate a SARIF output with the security issues identified during the analysis
+        - name: Run Codacy Analysis CLI
+          uses: codacy/codacy-analysis-cli-action@d840f886c4bd4edc059706d09c6a1586111c540b
+          with:
+            # Check https://github.com/codacy/codacy-analysis-cli#project-token to get your project token from your Codacy repository
+            # You can also omit the token and run the tools that support default configurations
+            project-token: ${{.CODACY_PROJECT_TOKEN }}
+            verbose: true
+            output: results.sarif
+            format: sarif
+            # Adjust severity of non-security issues
+            gh-code-scanning-compat: true
+            # Force 0 exit code to allow SARIF file generation
+            # This will handover control about PR rejection to the GitHub side
+            max-allowed-issues: 2147483647
+            
+        # Upload the SARIF file generated in the previous step
+        - name: Upload SARIF results file
+          uses: github/codeql-action/upload-sarif@v2
+          with:
+            sarif_file: results.sarif

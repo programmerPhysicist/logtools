@@ -19,8 +19,6 @@ on:
   pull_request:
     # The branches below must be a subset of the branches above
     branches: [ ALPython3 ]
-  schedule:
-    - cron: '41 0 * * 6'
 
 permissions:
   contents: read
@@ -36,6 +34,40 @@ jobs:
       # Checkout the repository to the GitHub Actions runner
       - name: Checkout code
         uses: actions/checkout@v3
+        
+      - name: Prepare for Python installs
+        run: |
+              python -m pip install --upgrade pip setuptools wheel
+              
+      - name: Install full featured dpath from my own github repo
+        # Need to load dpath from my repository; otherwise the setup.py
+        # will install the default version without the special features
+        # Repo information: origin/AL-addRegexp
+        #      https://github.com/AlainLich/dpath-python.git
+        # Using https://github.com/actions/checkout for all required
+        # information on actions/checkout@v2
+        uses: actions/checkout@v2
+        with:
+            # Repository name with owner. For example, actions/checkout
+            # Default: ${{ github.repository }}
+            repository: 'AlainLich/dpath-python'
+            # The branch, tag or SHA to checkout. When checking out the
+            # repository that triggered a workflow, this defaults to the
+            # reference or SHA for that event. Otherwise, uses the default
+            # branch.
+            ref: 'AL-addRegexp'
+            # Absolute path to place the repository. There seems to be
+            # constraints, as I received an error "... is not under ..."
+            # See https://github.com/actions/checkout
+            # and more specifically https://github.com/actions/checkout/issues/197
+            #    `` Today the path input is the only way to change the directory
+            #       where the code is cloned. Also there is a restriction that it
+            #       must be under GITHUB_WORKSPACE. ''
+            # See FR https://github.com/actions/checkout/issues/327
+            #
+            path: ${{ env.src_Dpath_path }}
+            # Don't clean, or it will erase the logtools repo in our build
+            clean: 'false'
 
       # Execute Codacy Analysis CLI and generate a SARIF output with the security issues identified during the analysis
       - name: Run Codacy Analysis CLI
